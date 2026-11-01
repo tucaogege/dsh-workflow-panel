@@ -1,0 +1,6 @@
+# Mounts the workflow panel host half. The browser half is discovered through
+# package.json's dsh.client manifest and the ./client export, exactly like
+# dsh-bot-board does.
+- insert:
+    - id: workflow-panel
+      name: dsh-workflow-panel
