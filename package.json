@@ -2,7 +2,7 @@
   "name": "dsh-workflow-panel",
   "version": "0.1.1",
   "type": "module",
-  "description": "DSH workflow panel: read-only project board (org, gates, milestones, task flow, roster).",
+  "description": "只读的项目工作流面板：概览、六道门、里程碑、组织模板、任务流、人员卡。Read-only project board for DSH.",
   "main": "host.js",
   "exports": {
     ".": "./host.js",
