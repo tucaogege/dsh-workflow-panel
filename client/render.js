@@ -1,4 +1,4 @@
-// Workflow panel — pure renderer.
+﻿// Workflow panel — pure renderer.
 //
 // Contract (M3, frozen by Lead): render(snapshot, ui) -> HTML string. This file must not touch
 // document / window / DOM globals, so tests import the exact code the slot runs. Interaction
@@ -13,7 +13,7 @@
 //   - keying uses adapter-provided ids (people[].id / gates[].id / milestones[].id), never an
 //     array index, so a renamed or reordered member cannot silently swap blocks.
 
-export const RENDER_VERSION = 2
+export const RENDER_VERSION = 5
 
 const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ESCAPES[ch])
@@ -63,12 +63,14 @@ const STATUS_TEXT = {
 const statusLabel = (raw, label) => asText(label) || STATUS_TEXT[raw] || asText(raw) || '未知状态'
 
 function header(snap) {
+  // 宿主发的字段是 loadedAt（host.js LOADED_AT）；旧 fixture 用的是 pluginLoadedAt。
+  // 两处名字曾经对不上，导致「插件装载」时间永远显示未加载——这里两处都认，优先宿主字段。
+  const loadedIso = toIso(snap.loadedAt ?? snap.pluginLoadedAt)
   const times = [
-    ['pluginLoadedAt', '插件装载'],
-    ['readAt', '数据更新'],
-    ['generatedAt', '快照生成'],
-  ].map(([key, label]) => {
-    const iso = toIso(snap[key])
+    ['pluginLoadedAt', '插件装载', loadedIso],
+    ['readAt', '数据更新', toIso(snap.readAt)],
+    ['generatedAt', '快照生成', toIso(snap.generatedAt)],
+  ].map(([key, label, iso]) => {
     return `<span class="wp-time" data-time="${key}">${esc(label)}：${iso ? esc(iso) : NOT_LOADED}</span>`
   })
   const budget = snap.project && snap.project.budget
@@ -76,7 +78,7 @@ function header(snap) {
     ? `预算上限 ${esc(budget.cap)}${esc(asText(budget.unit))} · 实际 ${esc(budget.spent_low)}–${esc(budget.spent_high)}${esc(asText(budget.unit))}`
     : `预算${MISSING}`
   return `<header class="wp-head" data-project="${esc(snap.project && snap.project.name)}">`
-    + `<div class="wp-title"><span class="wp-brand">panel v1</span>`
+    + `<div class="wp-title"><span class="wp-brand">panel v2</span>`
     + `<strong data-field="project.name">${esc(snap.project && snap.project.name) || '(未命名项目)'}</strong>`
     + `<span class="wp-sub" data-field="project.subtitle">${esc(snap.project && snap.project.subtitle)}</span></div>`
     + `<div class="wp-meta" data-budget="1">${esc(budgetText)}</div>`
@@ -536,7 +538,7 @@ function orgTemplate(snap) {
 }
 
 function emptyShell(reason) {
-  return `<div class="wp wp-empty" data-state="empty"><span class="wp-brand">panel v1</span>`
+  return `<div class="wp wp-empty" data-state="empty"><span class="wp-brand">panel v2</span>`
     + `<p class="wp-empty-text">${esc(reason)}</p></div>`
 }
 
@@ -857,11 +859,8 @@ export function attach(root, options = {}) {
 // track scrolls horizontally instead of reflowing); below 700px the track stacks.
 export const CSS = [
   '.wp,.wp *{box-sizing:border-box}',
-  // 外壳位置尺寸由 client 侧用 CSS 变量给（--wp-left/top/width/height），
-  // 这样 @media (max-width:700px) 的全屏规则还能盖住：内联只写变量，不直接写 left/top。
-  '.wp-shell{position:fixed;left:var(--wp-left,auto);top:var(--wp-top,56px);right:var(--wp-right,12px);width:var(--wp-width,min(1000px,64vw));height:var(--wp-height,auto);display:flex;flex-direction:column;background:var(--dsw-alias-bg-elevated,#fff);border:1px solid var(--dsw-alias-border,#e3e6ea);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:60;overflow:hidden}',
-  '.wp-shell [data-role="panel-host"]{flex:1 1 auto;overflow:auto;min-height:0}',
-  '.wp-shell .wp-status{flex:0 0 auto;padding:4px 10px;border-top:1px solid var(--dsw-alias-border,#e3e6ea);font-size:11px;color:#6a737d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+  // v0.1.4 起没有浮窗外壳：状态行样式直接给 .wp-status（右栏标签页里跟随在内容后）。
+  '.wp-status{flex:0 0 auto;padding:4px 10px;border-top:1px solid #1f242c;font-size:11px;color:#8b95a5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
   '.wp{container-type:inline-size;font:12px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--dsw-alias-text-primary,#1f2328);background:var(--dsw-alias-bg-elevated,#fff);padding:10px 12px;display:block}',
   '.wp h3{margin:14px 0 6px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}',
   '.wp h4{margin:8px 0 4px;font-size:12px;font-weight:600}',
@@ -988,10 +987,9 @@ export const CSS = [
   // 三列只在面板宽度 <700px 时堆叠。.wp 的 container 是内容盒（外壳 2px 边框 + 左右各 12px
   // padding = 26px），所以阈值写成 673px：面板 700px → 内容盒 674px → 仍是三列。
   '@container (max-width:673px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-gates-grid{grid-template-columns:1fr}}',
-  '@media (max-width:700px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-flow-grid{grid-template-columns:1fr}.wp-flow-cell[data-cell="head"]:nth-child(1),.wp-flow-cell[data-cell="head"]:nth-child(2),.wp-flow-cell[data-cell="head"]:nth-child(3),.wp-flow-cell[data-cell="issue"],.wp-flow-cell[data-cell="member"],.wp-flow-cell[data-cell="derived"]{grid-column:1;grid-row:auto}.wp-flow-cell[data-cell="derived"],.wp-flow-cell[data-cell="issue"]{grid-row:auto!important}.wp-flow-wires{display:none}.wp-shell{position:fixed;left:8px;right:8px;top:8px;bottom:8px;width:auto;height:auto;max-height:none}}',
+  '@media (max-width:700px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-flow-grid{grid-template-columns:1fr}.wp-flow-cell[data-cell="head"]:nth-child(1),.wp-flow-cell[data-cell="head"]:nth-child(2),.wp-flow-cell[data-cell="head"]:nth-child(3),.wp-flow-cell[data-cell="issue"],.wp-flow-cell[data-cell="member"],.wp-flow-cell[data-cell="derived"]{grid-column:1;grid-row:auto}.wp-flow-cell[data-cell="derived"],.wp-flow-cell[data-cell="issue"]{grid-row:auto!important}.wp-flow-wires{display:none}}',
   // ---- 基线深色主题（mockups/panel-final.png）：浅底换成深底，只改颜色不动结构 ----
-  '.wp,.wp-shell{background:#0f1115;color:#e6e8eb}',
-  '.wp-shell{border-color:#242a33;box-shadow:0 18px 48px rgba(0,0,0,.55)}',
+  '.wp{background:#0f1115;color:#e6e8eb}',
   '.wp-brand{color:#6ea8ff}',
   '.wp-sub,.wp-meta,.wp-times,.wp-empty-text,.wp-org-total,.wp-ms-owner,.wp-ms-criteria,.wp-task-evidence,.wp-person-counts,.wp-member-status,.wp-member-role,.wp-col-count,.wp-nav-label,.wp-legend{color:#8b95a5}',
   '.wp h3,.wp h4{color:#e6e8eb}',
@@ -1066,25 +1064,12 @@ export const CSS = [
   '.wp-task-title{flex:1 1 auto;min-width:0}',
   '.wp-task-status{flex:0 0 auto}',
   '.wp-task-evidence{flex:1 1 100%;padding-left:13px}',
-  // ---- 外壳开合（v2）：默认收起，右下角一个小按钮，点开才浮出面板，面板自带「收起 ×」。
-  // 触发原因：v1 开机即铺满右半屏，把宿主对话框和界面挡住。
-  // 胶囊可拖动：默认仍靠 right/bottom（变量未设时），拖过之后四个位置变量一起接管。
-  '.wp-fab{position:fixed;left:var(--fab-left,auto);top:var(--fab-top,auto);right:var(--fab-right,16px);bottom:var(--fab-bottom,96px);z-index:60;display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;border:1px solid #2b3440;background:#151a21;color:#cfe0ff;font:12px/1.2 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;cursor:grab;touch-action:none;user-select:none;box-shadow:0 6px 18px rgba(0,0,0,.45)}',
-  '.wp-fab[data-dragging="1"]{cursor:grabbing;background:#1b2230;color:#e6efff}',
-  '.wp-fab:hover{background:#1b2230;color:#e6efff}',
-  '.wp-fab[data-hidden="1"]{display:none}',
-  '.wp-fab-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}',
-  '.wp-fab[data-live="stale"] .wp-fab-dot{background:#d4a017}',
-  '.wp-fab[data-live="error"] .wp-fab-dot{background:#f85149}',
-  '.wp-shell[data-collapsed="1"]{display:none}',
-  '.wp-shell-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #1f242c;background:#12161c;cursor:move;user-select:none;touch-action:none}',
-  '.wp-shell-title{font-size:12px;font-weight:600;color:#e6e8eb;flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+  // v0.1.4：浮窗外壳/胶囊/缩放手柄已整体移除（用户裁定），此处只保留标签页内部仍用的
+  // 按钮样式（文档弹层的「关闭 ×」）。
   '.wp-shell-btn{flex:0 0 auto;font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid #2b3440;background:#1b2230;color:#a7b4c6;cursor:pointer;font-family:inherit}',
   '.wp-shell-btn:hover{color:#e6efff;border-color:#3b4655}',
-  // 右下角缩放手柄：只画角线，不铺底色；cursor 与 touch-action 必须显式给。
-  '.wp-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;touch-action:none;background:transparent;border-right:2px solid #3a4657;border-bottom:2px solid #3a4657;border-bottom-right-radius:10px}',
-  // D：文档原文弹层。绝对定位在 .wp-shell 内（不是全屏 overlay），所以它只盖住面板自己，
-  // 不会盖住宿主对话框；内容区 <pre> 保原样、可滚动，不做 markdown 渲染。
+  // D：文档原文弹层。绝对定位盖住右栏标签页容器（不是全屏 overlay），
+  // 内容区 <pre> 保原样、可滚动，不做 markdown 渲染。
   '.wp-doc-modal{position:absolute;inset:0;z-index:20;display:flex;padding:12px;background:rgba(6,8,12,.72)}',
   '.wp-doc-modal-inner{display:flex;flex-direction:column;width:100%;min-height:0;background:#11161d;border:1px solid #2b3440;border-radius:10px;overflow:hidden}',
   '.wp-doc-modal-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #1f242c;background:#12161c}',
@@ -1092,4 +1077,9 @@ export const CSS = [
   '.wp-doc-modal-body{flex:1 1 auto;min-height:0;overflow:auto;margin:0;padding:10px 12px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,"Cascadia Mono",monospace;color:#d7dde5;white-space:pre-wrap;word-break:break-word}',
   '.wp-doc-modal-state{margin:0;padding:14px 12px;font-size:12px;color:#8b95a5}',
   '.wp-doc-modal-error{color:#f0883e}',
+  // ---- 顶部页面视图（conversation.view）：内容成为「工作流」页签的主体 ----
+  // 容器由 Conversation 视图区控制高度，这里只负责撑满 + 自身滚动。
+  '.wp-view-host{position:relative;flex:1 1 auto;min-height:0;overflow:auto;background:#0f1115}',
+  '.wp-view-host .wp{min-height:100%}',
+  '.wp-view-host~.wp-status{border-top:1px solid #1f242c}',
 ].join('\n')

@@ -31,7 +31,7 @@ export const ROUTE = '/api/workflow-panel'
 // route on purpose — one request per clicked doc, not one per poll, and a huge or
 // private file cannot delay the board.
 export const DOC_ROUTE = '/api/workflow-panel/doc'
-export const PLUGIN_VERSION = '0.1.0'
+export const PLUGIN_VERSION = '0.1.5'
 // Hard ceiling for a doc body. Evidence files are meeting notes and plans; a file
 // past this is not something a card should inline, and reading it would block the
 // host process while it happens.

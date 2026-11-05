@@ -1,6 +1,6 @@
 {
   "name": "dsh-workflow-panel",
-  "version": "0.1.1",
+  "version": "0.1.5",
   "type": "module",
   "description": "只读的项目工作流面板：概览、六道门、里程碑、组织模板、任务流、人员卡。Read-only project board for DSH.",
   "main": "host.js",

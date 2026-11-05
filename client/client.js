@@ -1,4 +1,4 @@
-// Workflow panel — client half TEMPLATE.
+﻿// Workflow panel — client half TEMPLATE.
 //
 // 为什么是模板：DSH 把插件的客户端半物化成一份 "client combo" JavaScript 再执行，
 // 运行期没有相对模块解析（参考插件 dsh-bot-board / dshmarket 都是 esbuild 打成单文件的）。
@@ -9,6 +9,8 @@
 // 校验：node plugin/client/_dev/check-client-sync.mjs
 // 幂等保护：DSH 的 client combo 有时会把同一份 bundle 执行两次，
 // 第二次 load 同一 id 会抛 "duplicate factory registration" 并中断 web boot。
+// v0.1.4：取消浮窗与右下角胶囊（用户裁定）。面板只以 Harness 右栏标签页呈现
+// （dsh-context 同款挂法）；右栏服务不可用时显示「需要右侧栏」的引导态，不再出浮窗。
 if (!window.__WP_CLIENT_LOADED__) {
   window.__WP_CLIENT_LOADED__ = true
   window.__ModuleLoader__.load({
@@ -19,14 +21,14 @@ if (!window.__WP_CLIENT_LOADED__) {
     const ENDPOINT = '/api/workflow-panel'
     const DOC_ENDPOINT = '/api/workflow-panel/doc'
     const POLL_MS = 15000
-    // 面板最小/最大尺寸与拖动余量，全部集中在这里，别散落到各个 handler。
-    const MIN_W = 420
-    const MIN_H = 320
-    const KEEP_VISIBLE = 120
+    // 顶部页面标签的稳定标识与排序：与「上下文(20)、编队(30)」同一行，排在其后。
+    const TAB_ID = 'workflow-panel'
+    const TAB_TITLE = '工作流'
+    const TAB_ORDER = 40
 
     // ---- 以下整段由 sync-client.mjs 从 render.js 生成，勿手改 ----
     /*__RENDERER_BEGIN__*/
-    // Workflow panel — pure renderer.
+    ﻿// Workflow panel — pure renderer.
     //
     // Contract (M3, frozen by Lead): render(snapshot, ui) -> HTML string. This file must not touch
     // document / window / DOM globals, so tests import the exact code the slot runs. Interaction
@@ -41,7 +43,7 @@ if (!window.__WP_CLIENT_LOADED__) {
     //   - keying uses adapter-provided ids (people[].id / gates[].id / milestones[].id), never an
     //     array index, so a renamed or reordered member cannot silently swap blocks.
 
-    const RENDER_VERSION = 2
+    const RENDER_VERSION = 5
 
     const ESCAPES = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }
     const esc = value => String(value ?? '').replace(/[&<>"']/g, ch => ESCAPES[ch])
@@ -91,12 +93,14 @@ if (!window.__WP_CLIENT_LOADED__) {
     const statusLabel = (raw, label) => asText(label) || STATUS_TEXT[raw] || asText(raw) || '未知状态'
 
     function header(snap) {
+      // 宿主发的字段是 loadedAt（host.js LOADED_AT）；旧 fixture 用的是 pluginLoadedAt。
+      // 两处名字曾经对不上，导致「插件装载」时间永远显示未加载——这里两处都认，优先宿主字段。
+      const loadedIso = toIso(snap.loadedAt ?? snap.pluginLoadedAt)
       const times = [
-        ['pluginLoadedAt', '插件装载'],
-        ['readAt', '数据更新'],
-        ['generatedAt', '快照生成'],
-      ].map(([key, label]) => {
-        const iso = toIso(snap[key])
+        ['pluginLoadedAt', '插件装载', loadedIso],
+        ['readAt', '数据更新', toIso(snap.readAt)],
+        ['generatedAt', '快照生成', toIso(snap.generatedAt)],
+      ].map(([key, label, iso]) => {
         return `<span class="wp-time" data-time="${key}">${esc(label)}：${iso ? esc(iso) : NOT_LOADED}</span>`
       })
       const budget = snap.project && snap.project.budget
@@ -104,7 +108,7 @@ if (!window.__WP_CLIENT_LOADED__) {
         ? `预算上限 ${esc(budget.cap)}${esc(asText(budget.unit))} · 实际 ${esc(budget.spent_low)}–${esc(budget.spent_high)}${esc(asText(budget.unit))}`
         : `预算${MISSING}`
       return `<header class="wp-head" data-project="${esc(snap.project && snap.project.name)}">`
-        + `<div class="wp-title"><span class="wp-brand">panel v1</span>`
+        + `<div class="wp-title"><span class="wp-brand">panel v2</span>`
         + `<strong data-field="project.name">${esc(snap.project && snap.project.name) || '(未命名项目)'}</strong>`
         + `<span class="wp-sub" data-field="project.subtitle">${esc(snap.project && snap.project.subtitle)}</span></div>`
         + `<div class="wp-meta" data-budget="1">${esc(budgetText)}</div>`
@@ -564,7 +568,7 @@ if (!window.__WP_CLIENT_LOADED__) {
     }
 
     function emptyShell(reason) {
-      return `<div class="wp wp-empty" data-state="empty"><span class="wp-brand">panel v1</span>`
+      return `<div class="wp wp-empty" data-state="empty"><span class="wp-brand">panel v2</span>`
         + `<p class="wp-empty-text">${esc(reason)}</p></div>`
     }
 
@@ -885,11 +889,8 @@ if (!window.__WP_CLIENT_LOADED__) {
     // track scrolls horizontally instead of reflowing); below 700px the track stacks.
     const CSS = [
       '.wp,.wp *{box-sizing:border-box}',
-      // 外壳位置尺寸由 client 侧用 CSS 变量给（--wp-left/top/width/height），
-      // 这样 @media (max-width:700px) 的全屏规则还能盖住：内联只写变量，不直接写 left/top。
-      '.wp-shell{position:fixed;left:var(--wp-left,auto);top:var(--wp-top,56px);right:var(--wp-right,12px);width:var(--wp-width,min(1000px,64vw));height:var(--wp-height,auto);display:flex;flex-direction:column;background:var(--dsw-alias-bg-elevated,#fff);border:1px solid var(--dsw-alias-border,#e3e6ea);border-radius:12px;box-shadow:0 12px 32px rgba(0,0,0,.18);z-index:60;overflow:hidden}',
-      '.wp-shell [data-role="panel-host"]{flex:1 1 auto;overflow:auto;min-height:0}',
-      '.wp-shell .wp-status{flex:0 0 auto;padding:4px 10px;border-top:1px solid var(--dsw-alias-border,#e3e6ea);font-size:11px;color:#6a737d;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      // v0.1.4 起没有浮窗外壳：状态行样式直接给 .wp-status（右栏标签页里跟随在内容后）。
+      '.wp-status{flex:0 0 auto;padding:4px 10px;border-top:1px solid #1f242c;font-size:11px;color:#8b95a5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.wp{container-type:inline-size;font:12px/1.45 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;color:var(--dsw-alias-text-primary,#1f2328);background:var(--dsw-alias-bg-elevated,#fff);padding:10px 12px;display:block}',
       '.wp h3{margin:14px 0 6px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px}',
       '.wp h4{margin:8px 0 4px;font-size:12px;font-weight:600}',
@@ -1016,10 +1017,9 @@ if (!window.__WP_CLIENT_LOADED__) {
       // 三列只在面板宽度 <700px 时堆叠。.wp 的 container 是内容盒（外壳 2px 边框 + 左右各 12px
       // padding = 26px），所以阈值写成 673px：面板 700px → 内容盒 674px → 仍是三列。
       '@container (max-width:673px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-gates-grid{grid-template-columns:1fr}}',
-      '@media (max-width:700px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-flow-grid{grid-template-columns:1fr}.wp-flow-cell[data-cell="head"]:nth-child(1),.wp-flow-cell[data-cell="head"]:nth-child(2),.wp-flow-cell[data-cell="head"]:nth-child(3),.wp-flow-cell[data-cell="issue"],.wp-flow-cell[data-cell="member"],.wp-flow-cell[data-cell="derived"]{grid-column:1;grid-row:auto}.wp-flow-cell[data-cell="derived"],.wp-flow-cell[data-cell="issue"]{grid-row:auto!important}.wp-flow-wires{display:none}.wp-shell{position:fixed;left:8px;right:8px;top:8px;bottom:8px;width:auto;height:auto;max-height:none}}',
+      '@media (max-width:700px){.wp-org-grid{grid-template-columns:1fr}.wp-kpi-grid{grid-template-columns:repeat(3,minmax(0,1fr))}.wp-flow-grid{grid-template-columns:1fr}.wp-flow-cell[data-cell="head"]:nth-child(1),.wp-flow-cell[data-cell="head"]:nth-child(2),.wp-flow-cell[data-cell="head"]:nth-child(3),.wp-flow-cell[data-cell="issue"],.wp-flow-cell[data-cell="member"],.wp-flow-cell[data-cell="derived"]{grid-column:1;grid-row:auto}.wp-flow-cell[data-cell="derived"],.wp-flow-cell[data-cell="issue"]{grid-row:auto!important}.wp-flow-wires{display:none}}',
       // ---- 基线深色主题（mockups/panel-final.png）：浅底换成深底，只改颜色不动结构 ----
-      '.wp,.wp-shell{background:#0f1115;color:#e6e8eb}',
-      '.wp-shell{border-color:#242a33;box-shadow:0 18px 48px rgba(0,0,0,.55)}',
+      '.wp{background:#0f1115;color:#e6e8eb}',
       '.wp-brand{color:#6ea8ff}',
       '.wp-sub,.wp-meta,.wp-times,.wp-empty-text,.wp-org-total,.wp-ms-owner,.wp-ms-criteria,.wp-task-evidence,.wp-person-counts,.wp-member-status,.wp-member-role,.wp-col-count,.wp-nav-label,.wp-legend{color:#8b95a5}',
       '.wp h3,.wp h4{color:#e6e8eb}',
@@ -1094,25 +1094,12 @@ if (!window.__WP_CLIENT_LOADED__) {
       '.wp-task-title{flex:1 1 auto;min-width:0}',
       '.wp-task-status{flex:0 0 auto}',
       '.wp-task-evidence{flex:1 1 100%;padding-left:13px}',
-      // ---- 外壳开合（v2）：默认收起，右下角一个小按钮，点开才浮出面板，面板自带「收起 ×」。
-      // 触发原因：v1 开机即铺满右半屏，把宿主对话框和界面挡住。
-      // 胶囊可拖动：默认仍靠 right/bottom（变量未设时），拖过之后四个位置变量一起接管。
-      '.wp-fab{position:fixed;left:var(--fab-left,auto);top:var(--fab-top,auto);right:var(--fab-right,16px);bottom:var(--fab-bottom,96px);z-index:60;display:flex;align-items:center;gap:6px;padding:6px 12px;border-radius:16px;border:1px solid #2b3440;background:#151a21;color:#cfe0ff;font:12px/1.2 system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;cursor:grab;touch-action:none;user-select:none;box-shadow:0 6px 18px rgba(0,0,0,.45)}',
-      '.wp-fab[data-dragging="1"]{cursor:grabbing;background:#1b2230;color:#e6efff}',
-      '.wp-fab:hover{background:#1b2230;color:#e6efff}',
-      '.wp-fab[data-hidden="1"]{display:none}',
-      '.wp-fab-dot{width:7px;height:7px;border-radius:50%;background:#3fb950;flex:0 0 auto}',
-      '.wp-fab[data-live="stale"] .wp-fab-dot{background:#d4a017}',
-      '.wp-fab[data-live="error"] .wp-fab-dot{background:#f85149}',
-      '.wp-shell[data-collapsed="1"]{display:none}',
-      '.wp-shell-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #1f242c;background:#12161c;cursor:move;user-select:none;touch-action:none}',
-      '.wp-shell-title{font-size:12px;font-weight:600;color:#e6e8eb;flex:1 1 auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
+      // v0.1.4：浮窗外壳/胶囊/缩放手柄已整体移除（用户裁定），此处只保留标签页内部仍用的
+      // 按钮样式（文档弹层的「关闭 ×」）。
       '.wp-shell-btn{flex:0 0 auto;font-size:11px;padding:2px 8px;border-radius:6px;border:1px solid #2b3440;background:#1b2230;color:#a7b4c6;cursor:pointer;font-family:inherit}',
       '.wp-shell-btn:hover{color:#e6efff;border-color:#3b4655}',
-      // 右下角缩放手柄：只画角线，不铺底色；cursor 与 touch-action 必须显式给。
-      '.wp-resize{position:absolute;right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize;touch-action:none;background:transparent;border-right:2px solid #3a4657;border-bottom:2px solid #3a4657;border-bottom-right-radius:10px}',
-      // D：文档原文弹层。绝对定位在 .wp-shell 内（不是全屏 overlay），所以它只盖住面板自己，
-      // 不会盖住宿主对话框；内容区 <pre> 保原样、可滚动，不做 markdown 渲染。
+      // D：文档原文弹层。绝对定位盖住右栏标签页容器（不是全屏 overlay），
+      // 内容区 <pre> 保原样、可滚动，不做 markdown 渲染。
       '.wp-doc-modal{position:absolute;inset:0;z-index:20;display:flex;padding:12px;background:rgba(6,8,12,.72)}',
       '.wp-doc-modal-inner{display:flex;flex-direction:column;width:100%;min-height:0;background:#11161d;border:1px solid #2b3440;border-radius:10px;overflow:hidden}',
       '.wp-doc-modal-head{flex:0 0 auto;display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid #1f242c;background:#12161c}',
@@ -1120,32 +1107,14 @@ if (!window.__WP_CLIENT_LOADED__) {
       '.wp-doc-modal-body{flex:1 1 auto;min-height:0;overflow:auto;margin:0;padding:10px 12px;font:12px/1.5 ui-monospace,SFMono-Regular,Consolas,"Cascadia Mono",monospace;color:#d7dde5;white-space:pre-wrap;word-break:break-word}',
       '.wp-doc-modal-state{margin:0;padding:14px 12px;font-size:12px;color:#8b95a5}',
       '.wp-doc-modal-error{color:#f0883e}',
+      // ---- 顶部页面视图（conversation.view）：内容成为「工作流」页签的主体 ----
+      // 容器由 Conversation 视图区控制高度，这里只负责撑满 + 自身滚动。
+      '.wp-view-host{position:relative;flex:1 1 auto;min-height:0;overflow:auto;background:#0f1115}',
+      '.wp-view-host .wp{min-height:100%}',
+      '.wp-view-host~.wp-status{border-top:1px solid #1f242c}',
     ].join('\n')
     /*__RENDERER_END__*/
     // ---- 以上整段由 sync-client.mjs 生成 ----
-
-    function viewport() {
-      const w = window && Number.isFinite(window.innerWidth) ? window.innerWidth : 1286
-      const h = window && Number.isFinite(window.innerHeight) ? window.innerHeight : 900
-      return { w, h }
-    }
-
-    function initialBox() {
-      const { w, h } = viewport()
-      const width = Math.min(960, Math.round(w * 0.62))
-      const height = Math.min(720, Math.round(h * 0.72))
-      return { left: Math.max(8, w - width - 16), top: 64, width, height }
-    }
-
-    // 拖动/拉伸共用的钳制：尺寸不越视口，标题栏始终留在视口内且至少 120px 宽可见。
-    function clampBox(box) {
-      const { w, h } = viewport()
-      const width = Math.max(MIN_W, Math.min(box.width, w - 24))
-      const height = Math.max(MIN_H, Math.min(box.height, h - 24))
-      const top = Math.max(8, Math.min(box.top, h - 40))
-      const left = Math.max(KEEP_VISIBLE - width, Math.min(box.left, w - KEEP_VISIBLE))
-      return { left, top, width, height }
-    }
 
     // 样式随渲染器一起走：只插一次 <style>，不额外加文件。
     function ensureStyles() {
@@ -1200,75 +1169,8 @@ if (!window.__WP_CLIENT_LOADED__) {
       docRef.current = doc
       const snapshotRef = React.useRef(null)
       const detachRef = React.useRef(null)
-      const dragRef = React.useRef(null)
-      // v2：默认收起。v1 开机就把整块面板铺在右侧，把宿主对话框和界面挡住了。
-      const [open, setOpen] = React.useState(false)
       const [live, setLive] = React.useState('ok')
       const [status, setStatus] = React.useState('正在读取 /api/workflow-panel …')
-      // 位置尺寸放 state：拖动/拉伸都改这一份；收起只是 display:none，组件不卸载，
-      // 所以"收起后再打开"天然沿用上次的位置（不做 localStorage 持久化）。
-      const [box, setBox] = React.useState(initialBox())
-      // 小胶囊（.wp-fab）也能拖：null = 还没测过，先按默认右下角由 CSS 摆；测到后写 left/top。
-      const fabRef = React.useRef(null)
-      const fabDragRef = React.useRef(null)
-      // 拖动结束后要吞掉紧跟着的那一次 click；用独立 ref 标记，避免和"下一次按下"的
-      // drag 状态混在一起（否则拖过之后第一次单击会被误吞，看起来像点了没反应）。
-      const fabSuppressClickRef = React.useRef(false)
-      const [fabPos, setFabPos] = React.useState(null)
-      const [fabDragging, setFabDragging] = React.useState(false)
-
-      // 胶囊尺寸拿不到就按 78×28 兜底，保证首次定位不会跑出视口。
-      const fabSize = node => {
-        const rect = node && typeof node.getBoundingClientRect === 'function' ? node.getBoundingClientRect() : null
-        return {
-          w: rect && rect.width > 0 ? rect.width : 78,
-          h: rect && rect.height > 0 ? rect.height : 28,
-        }
-      }
-      const clampFab = (left, top, w, h) => {
-        const { w: vw, h: vh } = viewport()
-        return {
-          left: Math.max(8, Math.min(left, vw - w - 8)),
-          top: Math.max(8, Math.min(top, vh - h - 8)),
-        }
-      }
-      const startFabDrag = event => {
-        if (event && event.button != null && event.button !== 0) return
-        const size = fabSize(fabRef.current)
-        const base = fabPos || {
-          left: viewport().w - size.w - 16,
-          top: viewport().h - size.h - 96,
-        }
-        fabDragRef.current = {
-          startX: event.clientX,
-          startY: event.clientY,
-          left: base.left,
-          top: base.top,
-          moved: false,
-        }
-      }
-      // 拖动距离 > 4px 视为拖动，松手不打开面板；≤4px 才算点击。
-      // 这里只消费 suppress 标记，不再依赖 fabDragRef（它已在 pointerup 时清空）。
-      const openFromFab = () => {
-        const blocked = fabSuppressClickRef.current
-        fabSuppressClickRef.current = false
-        if (blocked) return
-        setOpen(true)
-      }
-
-      const startDrag = (event, mode) => {
-        if (event && event.button != null && event.button !== 0) return
-        const target = event && event.target
-        if (mode === 'move' && target && typeof target.closest === 'function' && target.closest('.wp-shell-btn')) return
-        if (mode === 'resize' && event && typeof event.preventDefault === 'function') event.preventDefault()
-        dragRef.current = { mode, startX: event.clientX, startY: event.clientY, box }
-        if (document.body && document.body.style) document.body.style.userSelect = 'none'
-      }
-      const endDrag = () => {
-        if (!dragRef.current) return
-        dragRef.current = null
-        if (document.body && document.body.style) document.body.style.userSelect = ''
-      }
 
       // D：点证据文档 → 面板内弹原文。只发 GET；404/403/413 一律显示后端给的 reason。
       const openDoc = async path => {
@@ -1297,102 +1199,15 @@ if (!window.__WP_CLIENT_LOADED__) {
         }
       }
 
-      // Esc：先关文档弹层，再关面板。面板是浮动层，键盘能关掉，用户不会被它锁住。
+      // Esc：关闭文档弹层。弹层只在右栏标签页内部显示，键盘能关掉。
       React.useEffect(() => {
         const onKey = event => {
           if (!event || event.key !== 'Escape') return
-          if (docRef.current) { setDoc(null); return }
-          setOpen(false)
+          if (docRef.current) setDoc(null)
         }
         document.addEventListener('keydown', onKey)
         return () => document.removeEventListener('keydown', onKey)
       }, [])
-
-      // 拖动 / 拉伸 / 视口变化。window 上挂一次，跟着组件生命周期摘掉。
-      React.useEffect(() => {
-        if (!window || typeof window.addEventListener !== 'function') return undefined
-        const onMove = event => {
-          const drag = dragRef.current
-          if (!drag) return
-          const dx = event.clientX - drag.startX
-          const dy = event.clientY - drag.startY
-          if (drag.mode === 'move') {
-            setBox(clampBox({ ...drag.box, left: drag.box.left + dx, top: drag.box.top + dy }))
-          } else {
-            const { w, h } = viewport()
-            setBox(clampBox({
-              ...drag.box,
-              width: Math.min(Math.max(drag.box.width + dx, MIN_W), w - 24),
-              height: Math.min(Math.max(drag.box.height + dy, MIN_H), h - 24),
-            }))
-          }
-        }
-        const onUp = () => endDrag()
-        const onResize = () => setBox(current => clampBox(current))
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
-        window.addEventListener('pointercancel', onUp)
-        window.addEventListener('resize', onResize)
-        return () => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
-          window.removeEventListener('pointercancel', onUp)
-          window.removeEventListener('resize', onResize)
-        }
-      }, [])
-
-      // 小胶囊首次定位 + 窗口 resize 后重新夹进视口。
-      React.useEffect(() => {
-        const place = () => {
-          const size = fabSize(fabRef.current)
-          const { w: vw, h: vh } = viewport()
-          setFabPos(current => (current
-            ? clampFab(current.left, current.top, size.w, size.h)
-            : clampFab(vw - size.w - 16, vh - size.h - 96, size.w, size.h)))
-        }
-        place()
-        if (!window || typeof window.addEventListener !== 'function') return undefined
-        window.addEventListener('resize', place)
-        return () => window.removeEventListener('resize', place)
-      }, [])
-
-      // 胶囊拖动：window 级 pointermove/pointerup，和面板拖动的 dragRef 完全分开，互不干扰。
-      React.useEffect(() => {
-        if (!window || typeof window.addEventListener !== 'function') return undefined
-        const onMove = event => {
-          const drag = fabDragRef.current
-          if (!drag) return
-          const dx = event.clientX - drag.startX
-          const dy = event.clientY - drag.startY
-          if (!drag.moved && Math.abs(dx) + Math.abs(dy) > 4) drag.moved = true
-          if (!drag.moved) return
-          setFabDragging(true)
-          const size = fabSize(fabRef.current)
-          setFabPos(clampFab(drag.left + dx, drag.top + dy, size.w, size.h))
-        }
-        const onUp = () => {
-          const drag = fabDragRef.current
-          if (!drag) return
-          fabDragRef.current = null
-          fabSuppressClickRef.current = drag.moved === true
-          setFabDragging(false)
-        }
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
-        window.addEventListener('pointercancel', onUp)
-        return () => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
-          window.removeEventListener('pointercancel', onUp)
-        }
-      }, [])
-
-      // 面板从收起变展开时，上一次 layoutWires 是在 display:none 下跑的（rect 全 0 直接跳过），
-      // 打开后补画一次；ResizeObserver 也会兜一次，这里是立刻生效的那次。
-      React.useEffect(() => {
-        if (!open || !hostRef.current) return
-        try { layoutWires(hostRef.current) } catch { /* 量不到就等 ResizeObserver */ }
-      }, [open])
 
       React.useEffect(() => {
         let alive = true
@@ -1401,8 +1216,17 @@ if (!window.__WP_CLIENT_LOADED__) {
         const paint = () => {
           const host = hostRef.current
           if (!host) return
+          // 轮询每 15s 整体重写一次 innerHTML；不保滚动位置的话，用户正往下翻时
+          // 每 15s 被拽回顶部一次。滚动容器就是 host 自己（.wp-view-host,
+          // CSS overflow:auto），重写后把 scrollTop/scrollLeft 原样还回去。
+          const scrollTop = host.scrollTop
+          const scrollLeft = host.scrollLeft
           host.innerHTML = render(snapshotRef.current, { closedGates: closedRef.current })
-          // ⑤ 连线要真实坐标：每次重绘后量一次（面板收起时 rect 全 0，layoutWires 自己会跳过）。
+          if (scrollTop > 0 || scrollLeft > 0) {
+            host.scrollTop = scrollTop
+            host.scrollLeft = scrollLeft
+          }
+          // ⑤ 连线要真实坐标：每次重绘后量一次。
           try { layoutWires(host) } catch { /* 画线失败不影响内容 */ }
         }
 
@@ -1453,64 +1277,9 @@ if (!window.__WP_CLIENT_LOADED__) {
       }, [])
 
       return h(React.Fragment, null,
-        h('button', {
-          ref: fabRef,
-          className: 'wp-fab',
-          type: 'button',
-          'data-hidden': open ? '1' : '0',
-          'data-live': live,
-          'data-dragging': fabDragging ? '1' : '0',
-          'aria-expanded': open ? 'true' : 'false',
-          title: '工作流面板（只读，点开看；Esc 收起；可拖动）',
-          // 四个位置变量一起给：只给 left/top 而留 CSS 里的 right/bottom，元素会被拉伸。
-          style: fabPos
-            ? {
-              '--fab-left': `${fabPos.left}px`,
-              '--fab-top': `${fabPos.top}px`,
-              '--fab-right': 'auto',
-              '--fab-bottom': 'auto',
-            }
-            : undefined,
-          onPointerDown: startFabDrag,
-          onClick: openFromFab,
-        },
-        h('span', { className: 'wp-fab-dot', 'aria-hidden': 'true' }),
-        '工作流面板'),
-        h('section', {
-          className: 'wp-shell',
-          'data-slot': 'shell.overlay',
-          'data-collapsed': open ? '0' : '1',
-          'aria-hidden': open ? 'false' : 'true',
-          // 只写 CSS 变量，不直接写 left/top/width/height：@media (max-width:700px)
-          // 的全屏规则要能盖住它（内联样式会赢，变量本身不参与布局）。
-          style: {
-            '--wp-left': `${box.left}px`,
-            '--wp-top': `${box.top}px`,
-            '--wp-width': `${box.width}px`,
-            '--wp-height': `${box.height}px`,
-          },
-        },
-        h('header', {
-          className: 'wp-shell-head',
-          title: '按住拖动面板',
-          onPointerDown: event => startDrag(event, 'move'),
-        },
-        h('span', { className: 'wp-shell-title' }, '工作流面板 v2'),
-        h('button', {
-          className: 'wp-shell-btn',
-          type: 'button',
-          title: '收起面板（Esc）',
-          onClick: () => setOpen(false),
-        }, '收起 ×')),
-        h('div', { ref: hostRef, 'data-role': 'panel-host' }),
+        h('div', { ref: hostRef, 'data-role': 'panel-host', className: 'wp-view-host' }),
         h('div', { className: 'wp-status', 'data-role': 'status' }, status),
-        h('div', {
-          className: 'wp-resize',
-          'data-role': 'resize',
-          title: '拖动改大小',
-          onPointerDown: event => startDrag(event, 'resize'),
-        }),
-        // D：文档原文弹层。放在 .wp-shell 内部（CSS 绝对定位 inset:0），只盖面板不盖宿主界面。
+        // 文档原文弹层：绝对定位盖住标签页容器，只盖面板不盖宿主界面。
         doc ? h('div', {
           className: 'wp-doc-modal',
           'data-role': 'doc-modal',
@@ -1535,19 +1304,25 @@ if (!window.__WP_CLIENT_LOADED__) {
                 className: 'wp-doc-modal-body',
                 'data-doc-state': 'ok',
                 'data-doc-bytes': doc.bytes ?? '',
-              }, doc.content))) : null))
+              }, doc.content))) : null)
     }
 
     return {
       inject: ['slots'],
       apply(ctx) {
-        // shell.overlay：文档确认过、参考插件（dsh-bot-board / dshmarket / ds-bot）实际在用的槽位。
-        // 旧的右侧栏槽位名在 desktop profile 全量检索 0 命中，已弃用。
-        ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-          name: 'shell.overlay',
-          id: 'workflow-panel',
-          order: 500,
-        }, Panel))
+        // 顶部页面标签（与「对话 / 轨迹 / 上下文 / 编队」同一行）：
+        // conversation.view 是 Harness 的 Conversation 目标视图槽位，
+        // dsh-context 的「上下文」页签与「编队」页签都在这里注册。
+        // v0.1.5 起改为挂这里；不再有右侧栏标签、也没有浮窗。
+        //   id     页签稳定标识
+        //   order  与其它页签的排序（上下文=20、编队=30，这条排在其后）
+        //   label  页签文字
+        ctx.slots.inject('conversation.view', () => ctx.slots.register({
+          name: 'conversation.view',
+          id: TAB_ID,
+          order: TAB_ORDER,
+          label: () => TAB_TITLE,
+        }, () => h(Panel)))
       },
     }
   },
