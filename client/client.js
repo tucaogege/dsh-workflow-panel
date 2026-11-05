@@ -28,7 +28,7 @@ if (!window.__WP_CLIENT_LOADED__) {
 
     // ---- 以下整段由 sync-client.mjs 从 render.js 生成，勿手改 ----
     /*__RENDERER_BEGIN__*/
-    ﻿// Workflow panel — pure renderer.
+    // Workflow panel — pure renderer.
     //
     // Contract (M3, frozen by Lead): render(snapshot, ui) -> HTML string. This file must not touch
     // document / window / DOM globals, so tests import the exact code the slot runs. Interaction
@@ -93,16 +93,20 @@ if (!window.__WP_CLIENT_LOADED__) {
     const statusLabel = (raw, label) => asText(label) || STATUS_TEXT[raw] || asText(raw) || '未知状态'
 
     function header(snap) {
-      // 宿主发的字段是 loadedAt（host.js LOADED_AT）；旧 fixture 用的是 pluginLoadedAt。
+      // 宿主发的字段是 loadedAt（host.js LOADED_AT）；旧 fixture / 离线工具用的是 pluginLoadedAt。
       // 两处名字曾经对不上，导致「插件装载」时间永远显示未加载——这里两处都认，优先宿主字段。
+      // 两者都没有时（离线渲染、fixture 缺字段）整条不显示，而不是硬报「未加载」——
+      // 那会把「这份数据没有这个字段」说成「插件没装好」，是两种完全不同的故障。
       const loadedIso = toIso(snap.loadedAt ?? snap.pluginLoadedAt)
       const times = [
         ['pluginLoadedAt', '插件装载', loadedIso],
         ['readAt', '数据更新', toIso(snap.readAt)],
         ['generatedAt', '快照生成', toIso(snap.generatedAt)],
-      ].map(([key, label, iso]) => {
-        return `<span class="wp-time" data-time="${key}">${esc(label)}：${iso ? esc(iso) : NOT_LOADED}</span>`
-      })
+      ]
+        .filter(([, , iso]) => iso)
+        .map(([key, label, iso]) => `<span class="wp-time" data-time="${key}">${esc(label)}：${esc(iso)}</span>`)
+      // 三个时间戳全缺席时仍要有一句话，否则头部的这一行会整块消失、看起来像渲染 bug。
+      if (!times.length) times.push(`<span class="wp-time" data-time="none">时间戳：${NOT_LOADED}</span>`)
       const budget = snap.project && snap.project.budget
       const budgetText = budget && budget.cap != null
         ? `预算上限 ${esc(budget.cap)}${esc(asText(budget.unit))} · 实际 ${esc(budget.spent_low)}–${esc(budget.spent_high)}${esc(asText(budget.unit))}`
